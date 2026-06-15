@@ -66,78 +66,46 @@ fn build_client(cookie: &str) -> Result<Client> {
 
 /// 通过移动端 API 获取帖子图片 URL
 async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String>, String)> {
-    // 先获取用户 ID
-    let api_url = format!("https://www.instagram.com/api/v1/users/web_profile_info/?username=instagram");
+    // 直接使用移动端 API 获取帖子（不需要用户 ID）
+    // 先通过 shortcode 获取 media_id
+    let embed_url = format!("https://www.instagram.com/p/{}/embed/", shortcode);
     let resp = client
-        .get(&api_url)
-        .header("X-IG-App-ID", "936619743392459")
+        .get(&embed_url)
+        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
         .send()
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("获取用户信息失败: {}", resp.status());
+        anyhow::bail!("获取嵌入页面失败: {}", resp.status());
     }
 
-    let data: serde_json::Value = resp.json().await?;
-    let user_id = data.pointer("/data/user/id")
-        .and_then(|v| v.as_str())
-        .context("无法获取用户 ID")?;
+    let html = resp.text().await?;
 
-    // 使用移动端 API 获取帖子
-    let feed_url = format!("https://www.instagram.com/api/v1/feed/user/{}/?count=50", user_id);
-    let resp = client
-        .get(&feed_url)
-        .header("User-Agent", "Instagram 275.0.0.27.98 Android")
-        .header("X-IG-App-ID", "936619743392459")
-        .send()
-        .await?;
+    // 从嵌入页面提取图片 URL
+    let mut images = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
-    if !resp.status().is_success() {
-        anyhow::bail!("获取帖子列表失败: {}", resp.status());
-    }
+    // 匹配 scontent 图片 URL
+    let re = regex::Regex::new(r#"https://scontent[^\s"'<>]+\.cdninstagram\.com/v/[^\s"'<>]+"#).unwrap();
+    for cap in re.captures_iter(&html) {
+        let url = cap[0].to_string().replace("&amp;", "&");
 
-    let data: serde_json::Value = resp.json().await?;
-    let items = data.get("items")
-        .and_then(|v| v.as_array())
-        .context("无法获取帖子列表")?;
+        // 过滤头像和小图
+        if url.contains("s150x150") || url.contains("s320x320") || url.contains("e15/") || url.contains("e35/") {
+            continue;
+        }
 
-    // 查找匹配 shortcode 的帖子
-    for item in items {
-        let code = item.get("code").and_then(|v| v.as_str()).unwrap_or("");
-        if code == shortcode {
-            let mut images = Vec::new();
+        // 只要图片
+        if !url.contains(".jpg") && !url.contains(".jpeg") && !url.contains(".png") && !url.contains(".webp") {
+            continue;
+        }
 
-            // 轮播帖
-            if let Some(carousel) = item.get("carousel_media").and_then(|v| v.as_array()) {
-                for media in carousel {
-                    let media_type = media.get("media_type").and_then(|v| v.as_u64()).unwrap_or(1);
-                    if media_type == 1 {
-                        if let Some(url) = media.pointer("/image_versions2/candidates/0/url").and_then(|v| v.as_str()) {
-                            images.push(url.to_string());
-                        }
-                    }
-                }
-            } else {
-                // 单图帖
-                let media_type = item.get("media_type").and_then(|v| v.as_u64()).unwrap_or(1);
-                if media_type == 1 {
-                    if let Some(url) = item.pointer("/image_versions2/candidates/0/url").and_then(|v| v.as_str()) {
-                        images.push(url.to_string());
-                    }
-                }
-            }
-
-            // 提取文案
-            let caption = item.pointer("/caption/text")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            return Ok((images, caption));
+        if seen.insert(url.clone()) {
+            images.push(url);
         }
     }
 
-    anyhow::bail!("未找到匹配的帖子")
+    Ok((images, String::new()))
 }
 
 /// 下载图片并转为 base64
