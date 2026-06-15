@@ -1,39 +1,44 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
-use std::path::Path;
-use tokio::fs;
+use serde::Serialize;
 
-/// 从 URL 下载帖子图片
-pub async fn download_images_from_url(
-    url: &str,
-    cookie: &str,
-    csrf_token: &str,
-    save_dir: &str,
-) -> Result<Vec<String>> {
+/// 下载的图片
+#[derive(Serialize, Clone)]
+pub struct DownloadedImage {
+    pub filename: String,
+    pub url: String,
+    pub data: String, // base64
+    pub size: u64,
+}
+
+/// 获取并下载帖子图片（返回 base64 数据）
+pub async fn fetch_and_download(url: &str, cookie: &str) -> Result<Vec<DownloadedImage>> {
     let shortcode = extract_shortcode(url)
         .context("无法从链接提取 shortcode")?;
 
-    let client = build_client(cookie, csrf_token)?;
+    let client = build_client(cookie)?;
 
     // 通过 GraphQL API 获取帖子数据
-    let (images, caption) = fetch_post_data(&client, &shortcode).await?;
+    let (image_urls, _caption) = fetch_post_data(&client, &shortcode).await?;
 
-    if images.is_empty() {
+    if image_urls.is_empty() {
         anyhow::bail!("未找到图片");
     }
 
-    // 下载图片
-    let save_path = Path::new(save_dir);
-    ensure_dir(save_path)?;
+    // 下载图片并转为 base64
+    let mut images = Vec::new();
+    for (i, img_url) in image_urls.iter().enumerate() {
+        let ext = guess_extension(img_url);
+        let filename = format!("{}_{}{}", shortcode, i + 1, ext);
 
-    let mut downloaded = Vec::new();
-    for (i, img_url) in images.iter().enumerate() {
-        let filename = format!("{}_{}{}.jpg", shortcode, i + 1, "");
-        let filepath = save_path.join(&filename);
-
-        match download_single(&client, img_url, &filepath).await {
-            Ok(size) => {
-                downloaded.push(filename);
+        match download_as_base64(&client, img_url).await {
+            Ok((data, size)) => {
+                images.push(DownloadedImage {
+                    filename,
+                    url: img_url.clone(),
+                    data,
+                    size,
+                });
             }
             Err(e) => {
                 eprintln!("下载失败 {}: {}", filename, e);
@@ -41,13 +46,12 @@ pub async fn download_images_from_url(
         }
     }
 
-    Ok(downloaded)
+    Ok(images)
 }
 
 /// 构建 HTTP 客户端
-fn build_client(cookie: &str, csrf_token: &str) -> Result<Client> {
+fn build_client(cookie: &str) -> Result<Client> {
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("X-CSRFToken", csrf_token.parse().unwrap());
     headers.insert("X-IG-App-ID", "936619743392459".parse().unwrap());
     headers.insert("X-Requested-With", "XMLHttpRequest".parse().unwrap());
     headers.insert("Accept", "application/json".parse().unwrap());
@@ -118,7 +122,6 @@ async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String
         }
     }
 
-    // 提取文案
     let caption = media
         .pointer("/edge_media_to_caption/edges/0/node/text")
         .and_then(|v| v.as_str())
@@ -126,6 +129,37 @@ async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String
         .to_string();
 
     Ok((images, caption))
+}
+
+/// 下载图片并转为 base64
+async fn download_as_base64(client: &Client, url: &str) -> Result<(String, u64)> {
+    let resp = client.get(url).send().await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("HTTP {}", resp.status());
+    }
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if !content_type.starts_with("image/") {
+        anyhow::bail!("不是图片: {}", content_type);
+    }
+
+    let bytes = resp.bytes().await?;
+    let size = bytes.len() as u64;
+
+    if size < 1000 {
+        anyhow::bail!("文件太小");
+    }
+
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    Ok((data, size))
 }
 
 /// 从链接中提取 shortcode
@@ -136,29 +170,9 @@ fn extract_shortcode(url: &str) -> Option<String> {
         .map(|m| m.as_str().to_string())
 }
 
-/// 确保目录存在
-fn ensure_dir(path: &Path) -> Result<()> {
-    if !path.exists() {
-        std::fs::create_dir_all(path)?;
-    }
-    Ok(())
-}
-
-/// 下载单个图片
-async fn download_single(client: &Client, url: &str, path: &Path) -> Result<u64> {
-    let resp = client.get(url).send().await?;
-
-    if !resp.status().is_success() {
-        anyhow::bail!("HTTP {}", resp.status());
-    }
-
-    let bytes = resp.bytes().await?;
-    let size = bytes.len() as u64;
-
-    if size < 1000 {
-        anyhow::bail!("文件太小 ({} bytes)", size);
-    }
-
-    fs::write(path, &bytes).await?;
-    Ok(size)
+/// 猜测文件扩展名
+fn guess_extension(url: &str) -> &str {
+    if url.contains(".png") { ".png" }
+    else if url.contains(".webp") { ".webp" }
+    else { ".jpg" }
 }

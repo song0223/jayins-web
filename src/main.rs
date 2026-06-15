@@ -12,18 +12,19 @@ use tower_http::cors::CorsLayer;
 mod downloader;
 mod profile;
 
+/// 默认 Cookie（自动续期）
+const DEFAULT_COOKIE: &str = "ds_user_id=6009511404; csrftoken=en2hyrbjkI3AjRBUKDUPcaLyNsGYhocx; wd=1671x626;sessionid=6009511404%3AFCWfjPPZclOaRK%3A13%3AAYi9DXyR3mqXBKwXoY6hYslKzF6HJR470-N-OHJmKQ";
+
 /// 应用状态
 #[derive(Clone)]
 struct AppState {
     cookie: Arc<Mutex<String>>,
-    csrf_token: Arc<Mutex<String>>,
 }
 
 impl AppState {
     fn new() -> Self {
         Self {
-            cookie: Arc::new(Mutex::new(String::new())),
-            csrf_token: Arc::new(Mutex::new(String::new())),
+            cookie: Arc::new(Mutex::new(DEFAULT_COOKIE.to_string())),
         }
     }
 }
@@ -45,7 +46,14 @@ struct ProfileRequest {
 #[derive(Deserialize)]
 struct DownloadRequest {
     url: String,
-    save_dir: Option<String>,
+}
+
+/// 下载的图片
+#[derive(Serialize, Clone)]
+struct DownloadedImage {
+    filename: String,
+    url: String,
+    data: String, // base64
 }
 
 /// API 响应
@@ -108,11 +116,6 @@ async fn update_cookie(
     let mut cookie = state.cookie.lock().unwrap();
     *cookie = req.cookie.clone();
 
-    if let Some(csrf) = req.csrf_token {
-        let mut csrf_token = state.csrf_token.lock().unwrap();
-        *csrf_token = csrf;
-    }
-
     Json(ApiResponse {
         success: true,
         message: "Cookie 已更新".to_string(),
@@ -144,27 +147,18 @@ async fn get_profile(
     }
 }
 
-/// 下载帖子图片
+/// 下载帖子图片（返回 base64 数据）
 async fn download_post(
     State(state): State<AppState>,
     Json(req): Json<DownloadRequest>,
 ) -> Result<Json<ApiResponse>, StatusCode> {
     let cookie = state.cookie.lock().unwrap().clone();
-    let csrf_token = state.csrf_token.lock().unwrap().clone();
-    let save_dir = req.save_dir.unwrap_or_else(|| {
-        dirs_next::download_dir()
-            .map(|p| p.join("jayins").to_string_lossy().to_string())
-            .unwrap_or_else(|| "downloads".to_string())
-    });
 
-    match downloader::download_images_from_url(&req.url, &cookie, &csrf_token, &save_dir).await {
-        Ok(downloaded) => Ok(Json(ApiResponse {
+    match downloader::fetch_and_download(&req.url, &cookie).await {
+        Ok(images) => Ok(Json(ApiResponse {
             success: true,
-            message: format!("下载完成，共 {} 张图片", downloaded.len()),
-            data: Some(serde_json::json!({
-                "files": downloaded,
-                "save_dir": save_dir
-            })),
+            message: format!("下载完成，共 {} 张图片", images.len()),
+            data: Some(serde_json::json!({ "images": images })),
         })),
         Err(e) => Ok(Json(ApiResponse {
             success: false,
