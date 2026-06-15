@@ -80,14 +80,11 @@ async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String
     let mut images = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    // 先解码 HTML 实体
-    let html = html.replace("&amp;", "&");
-
-    // 提取 scontent 图片 URL
-    // 使用更宽泛的匹配，然后手动清理
+    // 提取 scontent 图片 URL（先不解码，直接匹配含 &amp; 的完整 URL）
     let re = regex::Regex::new(r#"https://scontent[^\s"'<>]+\.cdninstagram\.com/v/[^\s"'<>]+"#).unwrap();
     for cap in re.captures_iter(&html) {
-        let url = cap[0].to_string();
+        // 解码 HTML 实体 &amp; → &
+        let url = cap[0].to_string().replace("&amp;", "&");
 
         // 过滤头像和小图
         if url.contains("s150x150") || url.contains("s320x320") || url.contains("e15/") || url.contains("e35/") {
