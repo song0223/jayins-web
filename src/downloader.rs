@@ -18,7 +18,7 @@ pub async fn fetch_and_download(url: &str, cookie: &str) -> Result<Vec<Downloade
 
     let client = build_client(cookie)?;
 
-    // 通过 GraphQL API 获取帖子数据
+    // 通过嵌入页面获取帖子图片 URL
     let (image_urls, _caption) = fetch_post_data(&client, &shortcode).await?;
 
     if image_urls.is_empty() {
@@ -53,8 +53,6 @@ pub async fn fetch_and_download(url: &str, cookie: &str) -> Result<Vec<Downloade
 fn build_client(cookie: &str) -> Result<Client> {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("X-IG-App-ID", "936619743392459".parse().unwrap());
-    headers.insert("X-Requested-With", "XMLHttpRequest".parse().unwrap());
-    headers.insert("Accept", "application/json".parse().unwrap());
     headers.insert("Referer", "https://www.instagram.com/".parse().unwrap());
     headers.insert("Cookie", cookie.parse().unwrap());
 
@@ -66,69 +64,44 @@ fn build_client(cookie: &str) -> Result<Client> {
     Ok(client)
 }
 
-/// 通过 GraphQL API 获取帖子数据
+/// 通过嵌入页面获取帖子图片 URL
 async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String>, String)> {
-    let variables = serde_json::json!({"shortcode": shortcode});
-    let form = [
-        ("variables", variables.to_string()),
-        ("doc_id", "8845758582119845".to_string()),
-    ];
-
+    let embed_url = format!("https://www.instagram.com/p/{}/embed/", shortcode);
     let resp = client
-        .post("https://www.instagram.com/graphql/query/")
-        .form(&form)
+        .get(&embed_url)
         .send()
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("API 请求失败: {}", resp.status());
+        anyhow::bail!("获取嵌入页面失败: {}", resp.status());
     }
 
-    let data: serde_json::Value = resp.json().await?;
-
-    if let Some(errors) = data.get("errors") {
-        anyhow::bail!("API 返回错误: {}", errors);
-    }
-
-    let media = data
-        .pointer("/data/xdt_shortcode_media")
-        .context("无法解析帖子数据")?;
-
+    let html = resp.text().await?;
     let mut images = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
-    // 轮播帖
-    if let Some(edges) = media
-        .get("edge_sidecar_to_children")
-        .and_then(|v| v.get("edges"))
-        .and_then(|v| v.as_array())
-    {
-        for edge in edges {
-            if let Some(node) = edge.get("node") {
-                let is_video = node.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
-                if !is_video {
-                    if let Some(display_url) = node.get("display_url").and_then(|v| v.as_str()) {
-                        images.push(display_url.to_string());
-                    }
-                }
-            }
+    // 提取 scontent 图片 URL
+    let re = regex::Regex::new(r#"https://scontent[^"'\''<>\s&]+\.cdninstagram\.com/v/[^"'\''<>\s&]+"#).unwrap();
+    for cap in re.captures_iter(&html) {
+        let raw_url = cap[0].to_string();
+        let url = raw_url.replace("&amp;", "&");
+
+        // 过滤头像和小图
+        if url.contains("s150x150") || url.contains("s320x320") || url.contains("e15/") || url.contains("e35/") {
+            continue;
         }
-    } else {
-        // 单图帖
-        let is_video = media.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
-        if !is_video {
-            if let Some(display_url) = media.get("display_url").and_then(|v| v.as_str()) {
-                images.push(display_url.to_string());
-            }
+
+        // 只要图片
+        if !url.contains(".jpg") && !url.contains(".jpeg") && !url.contains(".png") && !url.contains(".webp") {
+            continue;
+        }
+
+        if seen.insert(url.clone()) {
+            images.push(url);
         }
     }
 
-    let caption = media
-        .pointer("/edge_media_to_caption/edges/0/node/text")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    Ok((images, caption))
+    Ok((images, String::new()))
 }
 
 /// 下载图片并转为 base64
