@@ -82,20 +82,26 @@ async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String
 
     // 提取 scontent 图片 URL（先不解码，直接匹配含 &amp; 的完整 URL）
     let re = regex::Regex::new(r#"https://scontent[^\s"'<>]+\.cdninstagram\.com/v/[^\s"'<>]+"#).unwrap();
+    let total_matches = re.captures_iter(&html).count();
+    eprintln!("[DEBUG] 正则匹配到 {} 个 URL", total_matches);
+
     for cap in re.captures_iter(&html) {
         // 解码 HTML 实体 &amp; → &
         let url = cap[0].to_string().replace("&amp;", "&");
 
         // 过滤头像和小图
         if url.contains("s150x150") || url.contains("s320x320") || url.contains("e15/") || url.contains("e35/") {
+            eprintln!("[DEBUG] 过滤(头像/小图): {}...", &url[..url.len().min(60)]);
             continue;
         }
 
         // 只要图片
         if !url.contains(".jpg") && !url.contains(".jpeg") && !url.contains(".png") && !url.contains(".webp") {
+            eprintln!("[DEBUG] 过滤(非图片): {}...", &url[..url.len().min(60)]);
             continue;
         }
 
+        eprintln!("[DEBUG] 保留: {}...", &url[..url.len().min(80)]);
         if seen.insert(url.clone()) {
             images.push(url);
         }
