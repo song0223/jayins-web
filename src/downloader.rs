@@ -64,72 +64,80 @@ fn build_client(cookie: &str) -> Result<Client> {
     Ok(client)
 }
 
-/// 通过 GraphQL API 获取帖子图片 URL
+/// 通过移动端 API 获取帖子图片 URL
 async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String>, String)> {
-    let variables = serde_json::json!({"shortcode": shortcode});
-    let form = [
-        ("variables", variables.to_string()),
-        ("doc_id", "8845758582119845".to_string()),
-    ];
-
+    // 先获取用户 ID
+    let api_url = format!("https://www.instagram.com/api/v1/users/web_profile_info/?username=instagram");
     let resp = client
-        .post("https://www.instagram.com/graphql/query/")
-        .form(&form)
+        .get(&api_url)
+        .header("X-IG-App-ID", "936619743392459")
         .send()
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("GraphQL API 请求失败: {}", resp.status());
+        anyhow::bail!("获取用户信息失败: {}", resp.status());
     }
 
-    let text = resp.text().await?;
-    let data: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| anyhow::anyhow!("解析 JSON 失败: {}", e))?;
+    let data: serde_json::Value = resp.json().await?;
+    let user_id = data.pointer("/data/user/id")
+        .and_then(|v| v.as_str())
+        .context("无法获取用户 ID")?;
 
-    if let Some(errors) = data.get("errors") {
-        anyhow::bail!("API 返回错误: {}", errors);
+    // 使用移动端 API 获取帖子
+    let feed_url = format!("https://www.instagram.com/api/v1/feed/user/{}/?count=50", user_id);
+    let resp = client
+        .get(&feed_url)
+        .header("User-Agent", "Instagram 275.0.0.27.98 Android")
+        .header("X-IG-App-ID", "936619743392459")
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("获取帖子列表失败: {}", resp.status());
     }
 
-    let media = data
-        .pointer("/data/xdt_shortcode_media")
-        .context("无法解析帖子数据")?;
-
-    let mut images = Vec::new();
-
-    // 轮播帖
-    if let Some(edges) = media
-        .get("edge_sidecar_to_children")
-        .and_then(|v| v.get("edges"))
+    let data: serde_json::Value = resp.json().await?;
+    let items = data.get("items")
         .and_then(|v| v.as_array())
-    {
-        for edge in edges {
-            if let Some(node) = edge.get("node") {
-                let is_video = node.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
-                if !is_video {
-                    if let Some(display_url) = node.get("display_url").and_then(|v| v.as_str()) {
-                        images.push(display_url.to_string());
+        .context("无法获取帖子列表")?;
+
+    // 查找匹配 shortcode 的帖子
+    for item in items {
+        let code = item.get("code").and_then(|v| v.as_str()).unwrap_or("");
+        if code == shortcode {
+            let mut images = Vec::new();
+
+            // 轮播帖
+            if let Some(carousel) = item.get("carousel_media").and_then(|v| v.as_array()) {
+                for media in carousel {
+                    let media_type = media.get("media_type").and_then(|v| v.as_u64()).unwrap_or(1);
+                    if media_type == 1 {
+                        if let Some(url) = media.pointer("/image_versions2/candidates/0/url").and_then(|v| v.as_str()) {
+                            images.push(url.to_string());
+                        }
+                    }
+                }
+            } else {
+                // 单图帖
+                let media_type = item.get("media_type").and_then(|v| v.as_u64()).unwrap_or(1);
+                if media_type == 1 {
+                    if let Some(url) = item.pointer("/image_versions2/candidates/0/url").and_then(|v| v.as_str()) {
+                        images.push(url.to_string());
                     }
                 }
             }
-        }
-    } else {
-        // 单图帖
-        let is_video = media.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
-        if !is_video {
-            if let Some(display_url) = media.get("display_url").and_then(|v| v.as_str()) {
-                images.push(display_url.to_string());
-            }
+
+            // 提取文案
+            let caption = item.pointer("/caption/text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            return Ok((images, caption));
         }
     }
 
-    // 提取文案
-    let caption = media
-        .pointer("/edge_media_to_caption/edges/0/node/text")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    Ok((images, caption))
+    anyhow::bail!("未找到匹配的帖子")
 }
 
 /// 下载图片并转为 base64
