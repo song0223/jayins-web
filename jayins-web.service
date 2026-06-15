@@ -1,0 +1,15 @@
+[Unit]
+Description=Jayins Web - Instagram 图片下载器
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/jayins-web
+ExecStart=/home/jayins-web/jayins-web
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

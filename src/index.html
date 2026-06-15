@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jayins - Instagram 图片下载器</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 28px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        textarea {
+            height: 80px;
+            resize: vertical;
+        }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+            margin-top: 10px;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+        .result.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .result.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .result.show { display: block; }
+        .posts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-top: 16px;
+        }
+        .post-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .post-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .post-card img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+        .post-card .info {
+            padding: 8px;
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+        }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #28a745;
+            display: inline-block;
+            margin-right: 6px;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .tab {
+            flex: 1;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.3s;
+        }
+        .tab.active {
+            border-bottom-color: #667eea;
+            color: #667eea;
+            font-weight: 600;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📸 Jayins</h1>
+        <p class="subtitle">Instagram 图片下载器</p>
+
+        <div class="status-bar">
+            <span><span class="status-dot"></span>服务状态: <span id="status">检查中...</span></span>
+            <span>Cookie: <span id="cookie-status">未配置</span></span>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" data-tab="download">图片下载</div>
+            <div class="tab" data-tab="profile">主页抓取</div>
+            <div class="tab" data-tab="settings">设置</div>
+        </div>
+
+        <!-- 图片下载 -->
+        <div id="download" class="tab-content active">
+            <div class="form-group">
+                <label>帖子链接</label>
+                <input type="text" id="download-url" placeholder="https://www.instagram.com/p/...">
+            </div>
+            <div class="form-group">
+                <label>保存目录（可选）</label>
+                <input type="text" id="download-dir" placeholder="留空使用默认目录">
+            </div>
+            <button class="btn btn-primary" onclick="downloadPost()">开始下载</button>
+        </div>
+
+        <!-- 主页抓取 -->
+        <div id="profile" class="tab-content">
+            <div class="form-group">
+                <label>主页链接</label>
+                <input type="text" id="profile-url" placeholder="https://www.instagram.com/username/">
+            </div>
+            <button class="btn btn-primary" onclick="fetchProfile()">获取帖子</button>
+            <div id="posts-container"></div>
+        </div>
+
+        <!-- 设置 -->
+        <div id="settings" class="tab-content">
+            <div class="form-group">
+                <label>Instagram Cookie</label>
+                <textarea id="cookie-input" placeholder="粘贴你的 Cookie（包含 sessionid）"></textarea>
+            </div>
+            <div class="form-group">
+                <label>CSRF Token（可选）</label>
+                <input type="text" id="csrf-input" placeholder="从 Cookie 中自动提取">
+            </div>
+            <button class="btn btn-secondary" onclick="updateCookie()">保存 Cookie</button>
+            <button class="btn btn-secondary" onclick="testCookie()">测试连接</button>
+        </div>
+
+        <div id="result" class="result"></div>
+    </div>
+
+    <script>
+        // Tab 切换
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(tab.dataset.tab).classList.add('active');
+            });
+        });
+
+        // 显示结果
+        function showResult(message, isError = false) {
+            const result = document.getElementById('result');
+            result.textContent = message;
+            result.className = `result show ${isError ? 'error' : 'success'}`;
+            setTimeout(() => result.classList.remove('show'), 5000);
+        }
+
+        // 检查服务状态
+        async function checkStatus() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+                document.getElementById('status').textContent = data.status;
+                document.getElementById('cookie-status').textContent = data.cookie_configured ? '已配置' : '未配置';
+            } catch (e) {
+                document.getElementById('status').textContent = '连接失败';
+            }
+        }
+
+        // 更新 Cookie
+        async function updateCookie() {
+            const cookie = document.getElementById('cookie-input').value;
+            const csrf = document.getElementById('csrf-input').value;
+            try {
+                const resp = await fetch('/api/cookie', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie, csrf_token: csrf || null })
+                });
+                const data = await resp.json();
+                showResult(data.message, !data.success);
+                checkStatus();
+            } catch (e) {
+                showResult('请求失败: ' + e.message, true);
+            }
+        }
+
+        // 测试连接
+        async function testCookie() {
+            showResult('测试中...');
+            await fetchProfile();
+        }
+
+        // 获取主页帖子
+        async function fetchProfile() {
+            const url = document.getElementById('profile-url').value;
+            if (!url) {
+                showResult('请输入主页链接', true);
+                return;
+            }
+            showResult('正在获取...');
+            try {
+                const resp = await fetch('/api/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showResult(data.message);
+                    displayPosts(data.data);
+                } else {
+                    showResult(data.message, true);
+                }
+            } catch (e) {
+                showResult('请求失败: ' + e.message, true);
+            }
+        }
+
+        // 显示帖子列表
+        function displayPosts(posts) {
+            const container = document.getElementById('posts-container');
+            if (!posts || posts.length === 0) {
+                container.innerHTML = '<p style="text-align:center;color:#666;margin-top:20px;">未找到帖子</p>';
+                return;
+            }
+            let html = '<div class="posts-grid">';
+            posts.forEach(post => {
+                html += `
+                    <div class="post-card" onclick="copyUrl('${post.url}')">
+                        <img src="${post.cover_url}" alt="${post.id}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22150%22 height=%22150%22><rect fill=%22%23f0f0f0%22 width=%22150%22 height=%22150%22/><text x=%2275%22 y=%2275%22 text-anchor=%22middle%22 fill=%22%23999%22>📷</text></svg>'">
+                        <div class="info">${post.id}</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // 复制链接
+        function copyUrl(url) {
+            navigator.clipboard.writeText(url);
+            showResult('已复制: ' + url);
+        }
+
+        // 下载帖子
+        async function downloadPost() {
+            const url = document.getElementById('download-url').value;
+            const saveDir = document.getElementById('download-dir').value;
+            if (!url) {
+                showResult('请输入帖子链接', true);
+                return;
+            }
+            showResult('正在下载...');
+            try {
+                const resp = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, save_dir: saveDir || null })
+                });
+                const data = await resp.json();
+                showResult(data.message, !data.success);
+            } catch (e) {
+                showResult('请求失败: ' + e.message, true);
+            }
+        }
+
+        // 初始化
+        checkStatus();
+        setInterval(checkStatus, 30000);
+    </script>
+</body>
+</html>

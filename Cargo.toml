@@ -1,0 +1,18 @@
+[package]
+name = "jayins-web"
+version = "0.1.0"
+edition = "2021"
+description = "Instagram 图片下载器 Web 服务"
+
+[dependencies]
+axum = { version = "0.7", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+anyhow = "1"
+reqwest = { version = "0.12", features = ["json"] }
+scraper = "0.21"
+regex = "1"
+headless_chrome = "1"
+dirs-next = "2"
