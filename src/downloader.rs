@@ -84,7 +84,8 @@ async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String
     let html = html.replace("&amp;", "&");
 
     // 提取 scontent 图片 URL
-    let re = regex::Regex::new(r#"https://scontent[^"'\''<>\s]+\.cdninstagram\.com/v/[^"'\''<>\s]+"#).unwrap();
+    // 使用更宽泛的匹配，然后手动清理
+    let re = regex::Regex::new(r#"https://scontent[^\s"'<>]+\.cdninstagram\.com/v/[^\s"'<>]+"#).unwrap();
     for cap in re.captures_iter(&html) {
         let url = cap[0].to_string();
 
