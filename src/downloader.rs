@@ -64,50 +64,72 @@ fn build_client(cookie: &str) -> Result<Client> {
     Ok(client)
 }
 
-/// 通过嵌入页面获取帖子图片 URL
+/// 通过 GraphQL API 获取帖子图片 URL
 async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String>, String)> {
-    let embed_url = format!("https://www.instagram.com/p/{}/embed/", shortcode);
+    let variables = serde_json::json!({"shortcode": shortcode});
+    let form = [
+        ("variables", variables.to_string()),
+        ("doc_id", "8845758582119845".to_string()),
+    ];
+
     let resp = client
-        .get(&embed_url)
+        .post("https://www.instagram.com/graphql/query/")
+        .form(&form)
         .send()
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("获取嵌入页面失败: {}", resp.status());
+        anyhow::bail!("GraphQL API 请求失败: {}", resp.status());
     }
 
-    let html = resp.text().await?;
+    let text = resp.text().await?;
+    let data: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("解析 JSON 失败: {}", e))?;
+
+    if let Some(errors) = data.get("errors") {
+        anyhow::bail!("API 返回错误: {}", errors);
+    }
+
+    let media = data
+        .pointer("/data/xdt_shortcode_media")
+        .context("无法解析帖子数据")?;
+
     let mut images = Vec::new();
-    let mut seen = std::collections::HashSet::new();
 
-    // 提取 scontent 图片 URL（先不解码，直接匹配含 &amp; 的完整 URL）
-    let re = regex::Regex::new(r#"https://scontent[^\s"'<>]+\.cdninstagram\.com/v/[^\s"'<>]+"#).unwrap();
-    let total_matches = re.captures_iter(&html).count();
-    eprintln!("[DEBUG] 正则匹配到 {} 个 URL", total_matches);
-
-    for cap in re.captures_iter(&html) {
-        // 解码 HTML 实体 &amp; → &
-        let url = cap[0].to_string().replace("&amp;", "&");
-
-        // 过滤头像和小图
-        if url.contains("s150x150") || url.contains("s320x320") || url.contains("e15/") || url.contains("e35/") {
-            eprintln!("[DEBUG] 过滤(头像/小图): {}...", &url[..url.len().min(60)]);
-            continue;
+    // 轮播帖
+    if let Some(edges) = media
+        .get("edge_sidecar_to_children")
+        .and_then(|v| v.get("edges"))
+        .and_then(|v| v.as_array())
+    {
+        for edge in edges {
+            if let Some(node) = edge.get("node") {
+                let is_video = node.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
+                if !is_video {
+                    if let Some(display_url) = node.get("display_url").and_then(|v| v.as_str()) {
+                        images.push(display_url.to_string());
+                    }
+                }
+            }
         }
-
-        // 只要图片
-        if !url.contains(".jpg") && !url.contains(".jpeg") && !url.contains(".png") && !url.contains(".webp") {
-            eprintln!("[DEBUG] 过滤(非图片): {}...", &url[..url.len().min(60)]);
-            continue;
-        }
-
-        eprintln!("[DEBUG] 保留: {}...", &url[..url.len().min(80)]);
-        if seen.insert(url.clone()) {
-            images.push(url);
+    } else {
+        // 单图帖
+        let is_video = media.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !is_video {
+            if let Some(display_url) = media.get("display_url").and_then(|v| v.as_str()) {
+                images.push(display_url.to_string());
+            }
         }
     }
 
-    Ok((images, String::new()))
+    // 提取文案
+    let caption = media
+        .pointer("/edge_media_to_caption/edges/0/node/text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok((images, caption))
 }
 
 /// 下载图片并转为 base64
