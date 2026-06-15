@@ -80,11 +80,13 @@ async fn fetch_post_data(client: &Client, shortcode: &str) -> Result<(Vec<String
     let mut images = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
+    // 先解码 HTML 实体
+    let html = html.replace("&amp;", "&");
+
     // 提取 scontent 图片 URL
-    let re = regex::Regex::new(r#"https://scontent[^"'\''<>\s&]+\.cdninstagram\.com/v/[^"'\''<>\s&]+"#).unwrap();
+    let re = regex::Regex::new(r#"https://scontent[^"'\''<>\s]+\.cdninstagram\.com/v/[^"'\''<>\s]+"#).unwrap();
     for cap in re.captures_iter(&html) {
-        let raw_url = cap[0].to_string();
-        let url = raw_url.replace("&amp;", "&");
+        let url = cap[0].to_string();
 
         // 过滤头像和小图
         if url.contains("s150x150") || url.contains("s320x320") || url.contains("e15/") || url.contains("e35/") {
