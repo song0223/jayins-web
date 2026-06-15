@@ -23,9 +23,30 @@ struct AppState {
 
 impl AppState {
     fn new() -> Self {
+        // 尝试从配置文件读取 Cookie
+        let cookie = load_cookie_from_config()
+            .unwrap_or_else(|| DEFAULT_COOKIE.to_string());
+
         Self {
-            cookie: Arc::new(Mutex::new(DEFAULT_COOKIE.to_string())),
+            cookie: Arc::new(Mutex::new(cookie)),
         }
+    }
+}
+
+/// 从配置文件读取 Cookie
+fn load_cookie_from_config() -> Option<String> {
+    let config_path = dirs_next::config_dir()
+        .or_else(|| dirs_next::home_dir().map(|h| h.join(".config")))?
+        .join("jayins")
+        .join("cookie.txt");
+
+    if config_path.exists() {
+        std::fs::read_to_string(&config_path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    } else {
+        None
     }
 }
 
